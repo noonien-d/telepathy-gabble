@@ -30,7 +30,6 @@
 
 #include "extensions/extensions.h"
 
-#include "conn-avatars.h"
 #include "conn-presence.h"
 
 #include "connection.h"
@@ -181,9 +180,6 @@ static TpCMParamSpec jabber_params[] = {
   { "extra-certificate-identities", "as", 0,
     0, NULL, 0 /* unused */, NULL, NULL },
 
-  { "account-path-suffix", "s", G_TYPE_STRING,
-    0, NULL, 0 /* unused */, NULL, NULL },
-
   { "message-carbons", DBUS_TYPE_BOOLEAN_AS_STRING, G_TYPE_BOOLEAN,
     TP_CONN_MGR_PARAM_FLAG_HAS_DEFAULT, GINT_TO_POINTER(FALSE),
     0 /* unused */, NULL, NULL },
@@ -300,8 +296,6 @@ new_connection (TpBaseProtocol *protocol,
   conn = g_object_new (GABBLE_TYPE_CONNECTION,
                        "protocol", PROTOCOL_NAME,
                        "password", tp_asv_get_string (params, "password"),
-                       "account-path-suffix", tp_asv_get_string (params,
-                           "account-path-suffix"),
                        NULL);
 
   /* split up account into username, stream-server and resource */
@@ -356,7 +350,6 @@ get_interfaces_array (TpBaseProtocol *self)
 
   g_ptr_array_add (interfaces, TP_IFACE_PROTOCOL_INTERFACE_PRESENCE);
   g_ptr_array_add (interfaces, TP_IFACE_PROTOCOL_INTERFACE_ADDRESSING);
-  g_ptr_array_add (interfaces, TP_IFACE_PROTOCOL_INTERFACE_AVATARS);
 
   return interfaces;
 }
@@ -481,21 +474,6 @@ addressing_normalize_contact_uri (TpBaseProtocol *self,
 }
 
 static void
-get_avatar_details (TpBaseProtocol *base,
-    GStrv *supported_mime_types,
-    guint *min_height,
-    guint *min_width,
-    guint *rec_height,
-    guint *rec_width,
-    guint *max_height,
-    guint *max_width,
-    guint *max_bytes)
-{
-  gabble_connection_dup_avatar_requirements (supported_mime_types, min_height,
-      min_width, rec_height, rec_width, max_height, max_width, max_bytes);
-}
-
-static void
 gabble_jabber_protocol_class_init (GabbleJabberProtocolClass *klass)
 {
   TpBaseProtocolClass *base_class =
@@ -509,7 +487,6 @@ gabble_jabber_protocol_class_init (GabbleJabberProtocolClass *klass)
   base_class->get_connection_details = get_connection_details;
   base_class->get_statuses = get_presence_statuses;
   base_class->dup_authentication_types = dup_authentication_types;
-  base_class->get_avatar_details = get_avatar_details;
 }
 
 TpBaseProtocol *
