@@ -1351,7 +1351,7 @@ static void httpupload_sent_cb (SoupSession *session, SoupMessage *msg, gpointer
 
   g_object_get (msg, "status-code", &status, NULL);
 
-  if (status == 200)
+  if ((status == 200) || (status == 201))
     {
       TpBaseChannel *base = TP_BASE_CHANNEL (self);
       TpBaseConnection *base_conn = tp_base_channel_get_connection (base);
