@@ -66,7 +66,12 @@ struct _GabbleImFactoryPrivate
   gulong status_changed_id;
 
   gboolean dispose_has_run;
+
+  GHashTable *previous_messages;
 };
+
+void gabble_im_factory_load_previous_messageids (GabbleImFactory *self);
+void gabble_im_factory_save_previous_messageids (GabbleImFactory *self);
 
 static void
 gabble_im_factory_init (GabbleImFactory *self)
@@ -77,8 +82,12 @@ gabble_im_factory_init (GabbleImFactory *self)
   self->priv->channels = g_hash_table_new_full (g_direct_hash, g_direct_equal,
                                           NULL, g_object_unref);
 
+  self->priv->previous_messages = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+
   self->priv->conn = NULL;
   self->priv->dispose_has_run = FALSE;
+
+  gabble_im_factory_load_previous_messageids (self);
 }
 
 
@@ -119,6 +128,9 @@ gabble_im_factory_dispose (GObject *object)
 
   DEBUG ("dispose called");
   priv->dispose_has_run = TRUE;
+
+  gabble_im_factory_save_previous_messageids (fac);
+  g_hash_table_unref (priv->previous_messages);
 
   gabble_im_factory_close_all (fac);
   g_assert (priv->channels == NULL);
@@ -227,6 +239,16 @@ im_factory_message_cb (
     }
 
   chan_jid = (sent) ? to : from;
+
+  if (id != NULL)
+    {
+      /* ignore message if id is already known */
+      if (g_hash_table_insert (fac->priv->previous_messages, g_strdup (id), NULL) == FALSE)
+        {
+          DEBUG ("ignored duplicate message id='%s'", id);
+          return TRUE;
+        }
+    }
 
   /* We don't want to open up a channel for the sole purpose of reporting a
    * send error, nor if this is just a chat state notification.
@@ -847,4 +869,49 @@ caps_channel_manager_iface_init (gpointer g_iface,
   GabbleCapsChannelManagerInterface *iface = g_iface;
 
   iface->get_contact_caps = gabble_im_factory_get_contact_caps;
+}
+
+void
+gabble_im_factory_load_previous_messageids (GabbleImFactory *self)
+{
+  GError *error = NULL;
+  GIOChannel *file = g_io_channel_new_file ("/tmp/gabble.mids", "r", &error);
+  gsize len;
+  gchar *line;
+
+  if (error != NULL)
+  {
+    // Report error to user, and free error
+    DEBUG ("Unable to read file: %s\n", error->message);
+    g_error_free (error);
+    return;
+  }
+
+  while (g_io_channel_read_line (file, &line, &len, NULL, &error) == G_IO_STATUS_NORMAL)
+    {
+      g_strstrip (line);
+      DEBUG ("load id: '%s'", line);
+      g_hash_table_insert (self->priv->previous_messages, line, NULL);
+    }
+}
+
+void
+gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
+{
+  GabbleImFactoryPrivate *priv = self->priv;
+  if (g_hash_table_size (priv->previous_messages))
+    {
+      GHashTableIter iter;
+      gpointer key, value;
+      GError *error = NULL;
+      gsize len;
+      GIOChannel *file = g_io_channel_new_file ("/tmp/gabble.mids", "w", &error);
+      g_hash_table_iter_init (&iter, priv->previous_messages);
+      while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+          g_io_channel_write_chars (file, key, -1, &len, &error);
+          g_io_channel_write_chars (file, "\n", 1, &len, &error);
+        }
+      g_io_channel_shutdown (file, TRUE, &error);
+    }
 }
