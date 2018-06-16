@@ -72,6 +72,7 @@ struct _GabbleImFactoryPrivate
 
 void gabble_im_factory_load_previous_messageids (GabbleImFactory *self);
 void gabble_im_factory_save_previous_messageids (GabbleImFactory *self);
+void gabble_im_factory_mam_handle_sent (GabbleIMChannel *channel, TpSignalledMessage *message, guint flags, gchar *token, gpointer user_data);
 
 static void
 gabble_im_factory_init (GabbleImFactory *self)
@@ -433,6 +434,7 @@ new_im_channel (GabbleImFactory *fac,
   tp_base_channel_register ((TpBaseChannel *) chan);
 
   g_signal_connect (chan, "closed", (GCallback) im_channel_closed_cb, fac);
+  g_signal_connect (chan, "message-sent", (GCallback) gabble_im_factory_mam_handle_sent, fac);
 
   g_hash_table_insert (priv->channels, GUINT_TO_POINTER (handle), chan);
 
@@ -914,4 +916,13 @@ gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
         }
       g_io_channel_shutdown (file, TRUE, &error);
     }
+}
+
+void gabble_im_factory_mam_handle_sent (GabbleIMChannel *channel, TpSignalledMessage *message, guint flags, gchar *token, gpointer user_data)
+{
+  GabbleImFactory *self = GABBLE_IM_FACTORY (user_data);
+  GabbleImFactoryPrivate *priv = self->priv;
+
+  DEBUG ("sent message with id=%s", token);
+  g_hash_table_insert (priv->previous_messages, g_strdup (token), NULL);
 }
