@@ -68,6 +68,7 @@ struct _GabbleImFactoryPrivate
   gboolean dispose_has_run;
 
   GHashTable *previous_messages;
+  GTimeVal previous_time;
 };
 
 void gabble_im_factory_load_previous_messageids (GabbleImFactory *self);
@@ -84,6 +85,7 @@ gabble_im_factory_init (GabbleImFactory *self)
                                           NULL, g_object_unref);
 
   self->priv->previous_messages = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  g_date_clear (&self->priv->previous_time);
 
   self->priv->conn = NULL;
   self->priv->dispose_has_run = FALSE;
@@ -889,6 +891,15 @@ gabble_im_factory_load_previous_messageids (GabbleImFactory *self)
     return;
   }
 
+  if(g_io_channel_read_line (file, &line, &len, NULL, &error) == G_IO_STATUS_NORMAL)
+    {
+      g_strstrip (line);
+
+      if (g_time_val_from_iso8601 (line, &self->priv->previous_time) == FALSE) {
+        DEBUG ("mam timestamp invalid");
+      }
+    }
+
   while (g_io_channel_read_line (file, &line, &len, NULL, &error) == G_IO_STATUS_NORMAL)
     {
       g_strstrip (line);
@@ -908,6 +919,16 @@ gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
       GError *error = NULL;
       gsize len;
       GIOChannel *file = g_io_channel_new_file ("/tmp/gabble.mids", "w", &error);
+
+      g_get_current_time (&priv->previous_time);
+      gchar *timestamp = g_time_val_to_iso8601 (&priv->previous_time);
+      if (timestamp == NULL) {
+        DEBUG("Not able to create timestamp string");
+        return;
+      }
+      g_io_channel_write_chars (file, timestamp, -1, &len, &error);
+      g_io_channel_write_chars (file, "\n", 1, &len, &error);
+
       g_hash_table_iter_init (&iter, priv->previous_messages);
       while (g_hash_table_iter_next (&iter, &key, &value))
         {
