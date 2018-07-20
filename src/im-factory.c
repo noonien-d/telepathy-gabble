@@ -34,6 +34,7 @@
 
 #include "gabble/caps-channel-manager.h"
 #include "connection.h"
+#include "conn-util.h"
 #include "debug.h"
 #include "disco.h"
 #include "im-channel.h"
@@ -73,6 +74,7 @@ struct _GabbleImFactoryPrivate
 
 void gabble_im_factory_load_previous_messageids (GabbleImFactory *self);
 void gabble_im_factory_save_previous_messageids (GabbleImFactory *self);
+void gabble_im_factory_mam_request (GabbleImFactory *self);
 void gabble_im_factory_mam_handle_sent (GabbleIMChannel *channel, TpSignalledMessage *message, guint flags, gchar *token, gpointer user_data);
 
 static void
@@ -85,7 +87,7 @@ gabble_im_factory_init (GabbleImFactory *self)
                                           NULL, g_object_unref);
 
   self->priv->previous_messages = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
-  g_date_clear (&self->priv->previous_time);
+  self->priv->previous_time.tv_sec = 0;
 
   self->priv->conn = NULL;
   self->priv->dispose_has_run = FALSE;
@@ -240,6 +242,9 @@ im_factory_message_cb (
     {
       return FALSE;
     }
+
+  if (g_strstr_len (from, -1, conn_util_get_bare_self_jid (fac->priv->conn)))
+    sent = TRUE;
 
   chan_jid = (sent) ? to : from;
 
@@ -535,6 +540,9 @@ connection_status_changed_cb (GabbleConnection *conn,
     {
     case TP_CONNECTION_STATUS_DISCONNECTED:
       gabble_im_factory_close_all (self);
+      break;
+    case TP_CONNECTION_STATUS_CONNECTED:
+      gabble_im_factory_mam_request (self);
       break;
     }
 }
@@ -891,12 +899,13 @@ gabble_im_factory_load_previous_messageids (GabbleImFactory *self)
     return;
   }
 
-  if(g_io_channel_read_line (file, &line, &len, NULL, &error) == G_IO_STATUS_NORMAL)
+  if (g_io_channel_read_line (file, &line, &len, NULL, &error) == G_IO_STATUS_NORMAL)
     {
       g_strstrip (line);
 
       if (g_time_val_from_iso8601 (line, &self->priv->previous_time) == FALSE) {
         DEBUG ("mam timestamp invalid");
+        self->priv->previous_time.tv_sec = 0;
       }
     }
 
@@ -918,11 +927,12 @@ gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
       gpointer key, value;
       GError *error = NULL;
       gsize len;
+      gchar *timestamp;
       GIOChannel *file = g_io_channel_new_file ("/tmp/gabble.mids", "w", &error);
 
       g_get_current_time (&priv->previous_time);
-      gchar *timestamp = g_time_val_to_iso8601 (&priv->previous_time);
-      if (timestamp == NULL) {
+      timestamp = g_time_val_to_iso8601 (&priv->previous_time);
+      if ((self->priv->previous_time.tv_sec == 0) || (timestamp == NULL)) {
         DEBUG("Not able to create timestamp string");
         return;
       }
@@ -936,6 +946,57 @@ gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
           g_io_channel_write_chars (file, "\n", 1, &len, &error);
         }
       g_io_channel_shutdown (file, TRUE, &error);
+    }
+}
+
+static void
+gabble_im_factory_mam_request_reply_cb (GabbleConnection *conn, WockyStanza *sent_msg,
+                  WockyStanza *reply_msg, GObject *object, gpointer user_data)
+{
+  //~ GabbleImFactory *self = GABBLE_IM_FACTORY (object);
+  //~ GabbleImFactoryPrivate *priv = self->priv;
+
+  WockyNode *node = wocky_stanza_get_top_node (reply_msg);
+  //~ WockyStanza *msg = wocky_stanza_new ();
+  //~ WockyNode *msgnode = wocky_stanza_get_top_node (msg);
+
+  DEBUG ("got mam reply");
+
+  // Unwrap archive result
+  if (node = wocky_node_get_child_ns (node, "result", NS_MAM))
+    {
+      DEBUG ("unwrapped mam result");
+     //~ im_factory_message_cb (NULL, msg, self);
+    }
+}
+
+void
+gabble_im_factory_mam_request (GabbleImFactory *self)
+{
+  GabbleImFactoryPrivate *priv = self->priv;
+  GError *error;
+  WockyStanza *msg;
+  gchar *timestamp = g_time_val_to_iso8601 (&priv->previous_time);
+  if ((self->priv->previous_time.tv_sec == 0) || (timestamp == NULL)) {
+    DEBUG("Not able to create timestamp string");
+    return;
+  }
+
+  msg = wocky_stanza_build (WOCKY_STANZA_TYPE_IQ, WOCKY_STANZA_SUB_TYPE_SET, NULL, NULL,
+  '(', "query", ':', NS_MAM,
+    '(', "x", ':', NS_X_DATA, '@', "type", "submit",
+      '(', "field", '@', "var", "FORM_TYPE", '@', "type", "hidden",
+        '(', "value", '$', NS_MAM, ')',
+      ')',
+      '(', "field", '@', "var", "start",
+        '(', "value", '$', timestamp, ')',
+      ')',
+    ')',
+  ')', NULL);
+
+  if (! _gabble_connection_send_with_reply (priv->conn, msg, gabble_im_factory_mam_request_reply_cb, G_OBJECT(self), NULL, &error))
+    {
+      g_object_unref (msg);
     }
 }
 
