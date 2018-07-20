@@ -393,6 +393,30 @@ gabble_message_util_parse_incoming_message (WockyStanza *message,
 
   message_node = wocky_stanza_get_top_node (message);
 
+  // Unwrap MAM reply
+  if ((node = wocky_node_get_child_ns (message_node, "result", NS_MAM))
+      && (node = wocky_node_get_child_ns (node, "forwarded", NS_FORWARD)))
+    {
+      WockyNode *delaynode = wocky_node_get_child (node, "delay");
+      gchar *stampstr = NULL;
+      if (delaynode)
+        stampstr = wocky_node_get_attribute (delaynode, "stamp");
+
+      if (node = wocky_node_get_child (node, "message"))
+        {
+          DEBUG ("unwrapped mam result");
+          message_node = node;
+          if (stampstr) {
+            delaynode = wocky_node_add_child_ns (message_node, "delay", NS_XMPP_DELAY);
+            wocky_node_set_attribute (delaynode, "stamp", stampstr);
+            DEBUG ("copied delayed timestamp");
+          }
+          if (wocky_node_get_attribute (message_node, "id") == NULL) {
+            DEBUG ("ignored MAM without Id");
+            return FALSE;
+          }
+        }
+    }
   // Unwrap carbon message
   if (((node = wocky_node_get_child_ns (message_node, "received", NS_CARBONS))
       || (node = wocky_node_get_child_ns (message_node, "sent", NS_CARBONS)))
