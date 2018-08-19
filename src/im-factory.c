@@ -887,9 +887,11 @@ void
 gabble_im_factory_load_previous_messageids (GabbleImFactory *self)
 {
   GError *error = NULL;
-  GIOChannel *file = g_io_channel_new_file ("/tmp/gabble.mids", "r", &error);
   gsize len;
   gchar *line;
+  GIOChannel *file;
+  gchar *filename = g_strdup_printf ("%s/gabble.mids", g_get_user_cache_dir ());
+  file = g_io_channel_new_file (filename, "r", &error);
 
   if (error != NULL)
   {
@@ -928,7 +930,9 @@ gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
       GError *error = NULL;
       gsize len;
       gchar *timestamp;
-      GIOChannel *file = g_io_channel_new_file ("/tmp/gabble.mids", "w", &error);
+      GIOChannel *file;
+      gchar *filename = g_strdup_printf ("%s/gabble.mids", g_get_user_cache_dir ());
+      file = g_io_channel_new_file (filename, "w", &error);
 
       g_get_current_time (&priv->previous_time);
       timestamp = g_time_val_to_iso8601 (&priv->previous_time);
