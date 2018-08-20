@@ -971,13 +971,14 @@ gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
   gchar *timestamp;
   GIOChannel *file;
   gchar *filename = g_strdup_printf ("%s/gabble.mids", g_get_user_cache_dir ());
-  file = g_io_channel_new_file (filename, "w", &error);
   g_get_current_time (&priv->previous_time);
   timestamp = g_time_val_to_iso8601 (&priv->previous_time);
-  if ((self->priv->previous_time.tv_sec == 0) || (timestamp == NULL)) {
-    DEBUG("Not able to create timestamp string");
-    return;
-  }
+  if ((self->priv->previous_time.tv_sec == 0) || (timestamp == NULL))
+    {
+      DEBUG("Not able to create timestamp string");
+      return;
+    }
+  file = g_io_channel_new_file (filename, "w", &error);
   g_io_channel_write_chars (file, timestamp, -1, &len, &error);
   g_io_channel_write_chars (file, "\n", 1, &len, &error);
 
@@ -991,8 +992,8 @@ gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
           g_io_channel_write_chars (file, key, -1, &len, &error);
           g_io_channel_write_chars (file, "\n", 1, &len, &error);
         }
-      g_io_channel_shutdown (file, TRUE, &error);
     }
+  g_io_channel_shutdown (file, TRUE, &error);
 }
 
 static void
