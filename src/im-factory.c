@@ -74,7 +74,7 @@ struct _GabbleImFactoryPrivate
 
 void gabble_im_factory_load_previous_messageids (GabbleImFactory *self);
 void gabble_im_factory_save_previous_messageids (GabbleImFactory *self);
-void gabble_im_factory_mam_request (GabbleImFactory *self);
+void gabble_im_factory_mam_request (GabbleImFactory *self, const gchar *afterid);
 void gabble_im_factory_mam_handle_sent (GabbleIMChannel *channel, TpSignalledMessage *message, guint flags, gchar *token, gpointer user_data);
 
 static void
@@ -542,7 +542,7 @@ connection_status_changed_cb (GabbleConnection *conn,
       gabble_im_factory_close_all (self);
       break;
     case TP_CONNECTION_STATUS_CONNECTED:
-      gabble_im_factory_mam_request (self);
+      gabble_im_factory_mam_request (self, NULL);
       break;
     }
 }
@@ -957,17 +957,39 @@ static void
 gabble_im_factory_mam_request_reply_cb (GabbleConnection *conn, WockyStanza *sent_msg,
                   WockyStanza *reply_msg, GObject *object, gpointer user_data)
 {
-  //~ GabbleImFactory *self = GABBLE_IM_FACTORY (object);
-  //~ GabbleImFactoryPrivate *priv = self->priv;
-
+  GabbleImFactory *self = GABBLE_IM_FACTORY (object);
   WockyNode *node = wocky_stanza_get_top_node (reply_msg);
-  //~ WockyStanza *msg = wocky_stanza_new ();
-  //~ WockyNode *msgnode = wocky_stanza_get_top_node (msg);
 
-  DEBUG ("got mam reply");
+  if ((node = wocky_node_get_child_ns (node, "fin", NS_MAM)))
+    {
+      const gchar *str;
+      if ((str = wocky_node_get_attribute (node, "complete")))
+        {
+          if (strcmp (str, "true") == 0)
+            {
+              DEBUG ("received final mam result");
+              return;
+            }
+        }
+      DEBUG ("need to request more mam results");
+      node = wocky_node_get_child (node, "set");
+      if (!node)
+       {
+         DEBUG ("Missing <set> element, not able to retreive next set of mam messages");
+         return;
+       }
+      if ((str = wocky_node_get_content_from_child (node, "last")))
+        {
+          gabble_im_factory_mam_request (self, str);
+        }
+      else
+        {
+          DEBUG ("Missing last element, not able to retreive next set of mam messages");
+        }
+    }
 
   // Unwrap archive result
-  if (node = wocky_node_get_child_ns (node, "result", NS_MAM))
+  if ((node = wocky_node_get_child_ns (node, "result", NS_MAM)))
     {
       DEBUG ("unwrapped mam result");
      //~ im_factory_message_cb (NULL, msg, self);
@@ -975,7 +997,7 @@ gabble_im_factory_mam_request_reply_cb (GabbleConnection *conn, WockyStanza *sen
 }
 
 void
-gabble_im_factory_mam_request (GabbleImFactory *self)
+gabble_im_factory_mam_request (GabbleImFactory *self, const gchar *afterid)
 {
   GabbleImFactoryPrivate *priv = self->priv;
   GError *error;
@@ -997,6 +1019,17 @@ gabble_im_factory_mam_request (GabbleImFactory *self)
       ')',
     ')',
   ')', NULL);
+
+  if (afterid)
+    {
+      WockyNode *node = wocky_stanza_get_top_node (msg);
+      node = wocky_node_get_child (node, "query");
+      wocky_node_add_build (node,
+         '(', "set", ':', "http://jabber.org/protocol/rsm",
+            '(', "after", '$', afterid, ')',
+         ')',
+        NULL);
+    }
 
   if (! _gabble_connection_send_with_reply (priv->conn, msg, gabble_im_factory_mam_request_reply_cb, G_OBJECT(self), NULL, &error))
     {
