@@ -70,6 +70,7 @@ struct _GabbleImFactoryPrivate
 
   GHashTable *previous_messages;
   GTimeVal previous_time;
+  gboolean fetch_mam;
 };
 
 void gabble_im_factory_load_previous_messageids (GabbleImFactory *self);
@@ -91,8 +92,6 @@ gabble_im_factory_init (GabbleImFactory *self)
 
   self->priv->conn = NULL;
   self->priv->dispose_has_run = FALSE;
-
-  gabble_im_factory_load_previous_messageids (self);
 }
 
 
@@ -134,7 +133,6 @@ gabble_im_factory_dispose (GObject *object)
   DEBUG ("dispose called");
   priv->dispose_has_run = TRUE;
 
-  gabble_im_factory_save_previous_messageids (fac);
   g_hash_table_unref (priv->previous_messages);
 
   gabble_im_factory_close_all (fac);
@@ -248,7 +246,7 @@ im_factory_message_cb (
 
   chan_jid = (sent) ? to : from;
 
-  if (id != NULL)
+  if ((id != NULL) && (fac->priv->fetch_mam))
     {
       /* ignore message if id is already known */
       if (g_hash_table_insert (fac->priv->previous_messages, g_strdup (id), NULL) == FALSE)
@@ -441,7 +439,9 @@ new_im_channel (GabbleImFactory *fac,
   tp_base_channel_register ((TpBaseChannel *) chan);
 
   g_signal_connect (chan, "closed", (GCallback) im_channel_closed_cb, fac);
-  g_signal_connect (chan, "message-sent", (GCallback) gabble_im_factory_mam_handle_sent, fac);
+
+  if (priv->fetch_mam)
+    g_signal_connect (chan, "message-sent", (GCallback) gabble_im_factory_mam_handle_sent, fac);
 
   g_hash_table_insert (priv->channels, GUINT_TO_POINTER (handle), chan);
 
@@ -539,10 +539,18 @@ connection_status_changed_cb (GabbleConnection *conn,
   switch (status)
     {
     case TP_CONNECTION_STATUS_DISCONNECTED:
+      if (self->priv->fetch_mam)
+        {
+          gabble_im_factory_save_previous_messageids (self);
+        }
       gabble_im_factory_close_all (self);
       break;
     case TP_CONNECTION_STATUS_CONNECTED:
-      gabble_im_factory_mam_request (self, NULL);
+      if (self->priv->fetch_mam)
+        {
+          gabble_im_factory_load_previous_messageids (self);
+          gabble_im_factory_mam_request (self, NULL);
+        }
       break;
     }
 }
@@ -622,6 +630,7 @@ porter_available_cb (
       ')', NULL);
 
   g_object_get (conn, "stream-server", &stream_server, NULL);
+  g_object_get (conn, "fetch-mam", &self->priv->fetch_mam, NULL);
 
   if (!tp_strdiff (stream_server, "chat.facebook.com"))
     {
