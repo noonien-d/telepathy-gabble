@@ -398,11 +398,11 @@ gabble_message_util_parse_incoming_message (WockyStanza *message,
       && (node = wocky_node_get_child_ns (node, "forwarded", NS_FORWARD)))
     {
       WockyNode *delaynode = wocky_node_get_child (node, "delay");
-      gchar *stampstr = NULL;
+      const gchar *stampstr = NULL;
       if (delaynode)
         stampstr = wocky_node_get_attribute (delaynode, "stamp");
 
-      if (node = wocky_node_get_child (node, "message"))
+      if ((node = wocky_node_get_child (node, "message")))
         {
           DEBUG ("unwrapped mam result");
           message_node = node;
