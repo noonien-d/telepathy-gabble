@@ -182,6 +182,7 @@ enum
     PROP_FORCE_CHAT_MARKERS,
     PROP_FORCE_RECEIPTS,
     PROP_FORCE_HTTPUPLOAD,
+    PROP_FETCH_MAM,
 
     LAST_PROPERTY
 };
@@ -240,6 +241,7 @@ struct _GabbleConnectionPrivate
   gboolean force_chat_markers;
   gboolean force_receipts;
   gboolean force_httpupload;
+  gboolean fetch_mam;
 
   /* authentication properties */
   gchar *stream_server;
@@ -718,6 +720,10 @@ gabble_connection_get_property (GObject    *object,
       g_value_set_boolean (value, priv->force_httpupload);
       break;
 
+    case PROP_FETCH_MAM:
+      g_value_set_boolean (value, priv->fetch_mam);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
       break;
@@ -883,6 +889,10 @@ gabble_connection_set_property (GObject      *object,
 
     case PROP_FORCE_HTTPUPLOAD:
       priv->force_httpupload = g_value_get_boolean (value);
+      break;
+
+    case PROP_FETCH_MAM:
+      priv->fetch_mam = g_value_get_boolean (value);
       break;
 
     default:
@@ -1329,6 +1339,14 @@ gabble_connection_class_init (GabbleConnectionClass *gabble_connection_class)
       g_param_spec_boolean (
           "force-httpupload", "Prefer httpupload?",
           "Prefer httpupload to si-filetransfer, if available",
+          FALSE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (
+      object_class, PROP_FETCH_MAM,
+      g_param_spec_boolean (
+          "fetch-mam", "Fetch message archive on connection",
+          "Client will request messages received after the last disconnection from server archive.",
           FALSE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 

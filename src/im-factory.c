@@ -34,6 +34,7 @@
 
 #include "gabble/caps-channel-manager.h"
 #include "connection.h"
+#include "conn-util.h"
 #include "debug.h"
 #include "disco.h"
 #include "im-channel.h"
@@ -66,7 +67,16 @@ struct _GabbleImFactoryPrivate
   gulong status_changed_id;
 
   gboolean dispose_has_run;
+
+  GHashTable *previous_messages;
+  GTimeVal previous_time;
+  gboolean fetch_mam;
 };
+
+void gabble_im_factory_load_previous_messageids (GabbleImFactory *self);
+void gabble_im_factory_save_previous_messageids (GabbleImFactory *self);
+void gabble_im_factory_mam_request (GabbleImFactory *self, const gchar *afterid);
+void gabble_im_factory_mam_handle_sent (GabbleIMChannel *channel, TpSignalledMessage *message, guint flags, gchar *token, gpointer user_data);
 
 static void
 gabble_im_factory_init (GabbleImFactory *self)
@@ -76,6 +86,9 @@ gabble_im_factory_init (GabbleImFactory *self)
 
   self->priv->channels = g_hash_table_new_full (g_direct_hash, g_direct_equal,
                                           NULL, g_object_unref);
+
+  self->priv->previous_messages = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  self->priv->previous_time.tv_sec = 0;
 
   self->priv->conn = NULL;
   self->priv->dispose_has_run = FALSE;
@@ -119,6 +132,8 @@ gabble_im_factory_dispose (GObject *object)
 
   DEBUG ("dispose called");
   priv->dispose_has_run = TRUE;
+
+  g_hash_table_unref (priv->previous_messages);
 
   gabble_im_factory_close_all (fac);
   g_assert (priv->channels == NULL);
@@ -226,7 +241,20 @@ im_factory_message_cb (
       return FALSE;
     }
 
+  if (g_strstr_len (from, -1, conn_util_get_bare_self_jid (fac->priv->conn)))
+    sent = TRUE;
+
   chan_jid = (sent) ? to : from;
+
+  if ((id != NULL) && (fac->priv->fetch_mam))
+    {
+      /* ignore message if id is already known */
+      if (g_hash_table_insert (fac->priv->previous_messages, g_strdup (id), NULL) == FALSE)
+        {
+          DEBUG ("ignored duplicate message id='%s'", id);
+          return TRUE;
+        }
+    }
 
   /* We don't want to open up a channel for the sole purpose of reporting a
    * send error, nor if this is just a chat state notification.
@@ -412,6 +440,9 @@ new_im_channel (GabbleImFactory *fac,
 
   g_signal_connect (chan, "closed", (GCallback) im_channel_closed_cb, fac);
 
+  if (priv->fetch_mam)
+    g_signal_connect (chan, "message-sent", (GCallback) gabble_im_factory_mam_handle_sent, fac);
+
   g_hash_table_insert (priv->channels, GUINT_TO_POINTER (handle), chan);
 
   if (request_token != NULL)
@@ -551,7 +582,18 @@ connection_status_changed_cb (GabbleConnection *conn,
   switch (status)
     {
     case TP_CONNECTION_STATUS_DISCONNECTED:
+      if (self->priv->fetch_mam)
+        {
+          gabble_im_factory_save_previous_messageids (self);
+        }
       gabble_im_factory_close_all (self);
+      break;
+    case TP_CONNECTION_STATUS_CONNECTED:
+      if (self->priv->fetch_mam)
+        {
+          gabble_im_factory_load_previous_messageids (self);
+          gabble_im_factory_mam_request (self, NULL);
+        }
       break;
     }
 }
@@ -631,6 +673,7 @@ porter_available_cb (
       ')', NULL);
 
   g_object_get (conn, "stream-server", &stream_server, NULL);
+  g_object_get (conn, "fetch-mam", &self->priv->fetch_mam, NULL);
 
   if (!tp_strdiff (stream_server, "chat.facebook.com"))
     {
@@ -898,4 +941,167 @@ GabbleIMChannel *gabble_im_factory_get_channel_for_incoming_message (
                     gboolean create_if_missing)
 {
   return get_channel_for_incoming_message (self, jid, create_if_missing);
+}
+
+void
+gabble_im_factory_load_previous_messageids (GabbleImFactory *self)
+{
+  GError *error = NULL;
+  gsize len;
+  gchar *line;
+  GIOChannel *file;
+  gchar *filename = g_strdup_printf ("%s/gabble.mids", g_get_user_cache_dir ());
+  file = g_io_channel_new_file (filename, "r", &error);
+
+  if (error != NULL)
+  {
+    // Report error to user, and free error
+    DEBUG ("Unable to read file: %s\n", error->message);
+    g_error_free (error);
+    return;
+  }
+
+  if (g_io_channel_read_line (file, &line, &len, NULL, &error) == G_IO_STATUS_NORMAL)
+    {
+      g_strstrip (line);
+
+      if (g_time_val_from_iso8601 (line, &self->priv->previous_time) == FALSE) {
+        DEBUG ("mam timestamp invalid");
+        self->priv->previous_time.tv_sec = 0;
+      }
+    }
+
+  while (g_io_channel_read_line (file, &line, &len, NULL, &error) == G_IO_STATUS_NORMAL)
+    {
+      g_strstrip (line);
+      DEBUG ("load id: '%s'", line);
+      g_hash_table_insert (self->priv->previous_messages, line, NULL);
+    }
+}
+
+void
+gabble_im_factory_save_previous_messageids (GabbleImFactory *self)
+{
+  GabbleImFactoryPrivate *priv = self->priv;
+  GError *error = NULL;
+  gsize len;
+  gchar *timestamp;
+  GIOChannel *file;
+  gchar *filename = g_strdup_printf ("%s/gabble.mids", g_get_user_cache_dir ());
+  g_get_current_time (&priv->previous_time);
+  timestamp = g_time_val_to_iso8601 (&priv->previous_time);
+  if ((self->priv->previous_time.tv_sec == 0) || (timestamp == NULL))
+    {
+      DEBUG("Not able to create timestamp string");
+      return;
+    }
+  file = g_io_channel_new_file (filename, "w", &error);
+  g_io_channel_write_chars (file, timestamp, -1, &len, &error);
+  g_io_channel_write_chars (file, "\n", 1, &len, &error);
+
+  if (g_hash_table_size (priv->previous_messages))
+    {
+      GHashTableIter iter;
+      gpointer key, value;
+      g_hash_table_iter_init (&iter, priv->previous_messages);
+      while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+          g_io_channel_write_chars (file, key, -1, &len, &error);
+          g_io_channel_write_chars (file, "\n", 1, &len, &error);
+        }
+    }
+  g_io_channel_shutdown (file, TRUE, &error);
+}
+
+static void
+gabble_im_factory_mam_request_reply_cb (GabbleConnection *conn, WockyStanza *sent_msg,
+                  WockyStanza *reply_msg, GObject *object, gpointer user_data)
+{
+  GabbleImFactory *self = GABBLE_IM_FACTORY (object);
+  WockyNode *node = wocky_stanza_get_top_node (reply_msg);
+
+  if ((node = wocky_node_get_child_ns (node, "fin", NS_MAM)))
+    {
+      const gchar *str;
+      if ((str = wocky_node_get_attribute (node, "complete")))
+        {
+          if (strcmp (str, "true") == 0)
+            {
+              DEBUG ("received final mam result");
+              return;
+            }
+        }
+      DEBUG ("need to request more mam results");
+      node = wocky_node_get_child (node, "set");
+      if (!node)
+       {
+         DEBUG ("Missing <set> element, not able to retreive next set of mam messages");
+         return;
+       }
+      if ((str = wocky_node_get_content_from_child (node, "last")))
+        {
+          gabble_im_factory_mam_request (self, str);
+        }
+      else
+        {
+          DEBUG ("Missing last element, not able to retreive next set of mam messages");
+        }
+    }
+
+  // Unwrap archive result
+  if ((node = wocky_node_get_child_ns (node, "result", NS_MAM)))
+    {
+      DEBUG ("unwrapped mam result");
+     //~ im_factory_message_cb (NULL, msg, self);
+    }
+}
+
+void
+gabble_im_factory_mam_request (GabbleImFactory *self, const gchar *afterid)
+{
+  GabbleImFactoryPrivate *priv = self->priv;
+  GError *error;
+  WockyStanza *msg;
+  gchar *timestamp = g_time_val_to_iso8601 (&priv->previous_time);
+  if ((self->priv->previous_time.tv_sec == 0) || (timestamp == NULL)) {
+    DEBUG("Not able to create timestamp string");
+    return;
+  }
+
+  msg = wocky_stanza_build (WOCKY_STANZA_TYPE_IQ, WOCKY_STANZA_SUB_TYPE_SET, NULL, NULL,
+  '(', "query", ':', NS_MAM,
+    '(', "x", ':', NS_X_DATA, '@', "type", "submit",
+      '(', "field", '@', "var", "FORM_TYPE", '@', "type", "hidden",
+        '(', "value", '$', NS_MAM, ')',
+      ')',
+      '(', "field", '@', "var", "start",
+        '(', "value", '$', timestamp, ')',
+      ')',
+    ')',
+  ')', NULL);
+
+  if (afterid)
+    {
+      WockyNode *node = wocky_stanza_get_top_node (msg);
+      node = wocky_node_get_child (node, "query");
+      wocky_node_add_build (node,
+         '(', "set", ':', "http://jabber.org/protocol/rsm",
+            '(', "after", '$', afterid, ')',
+         ')',
+        NULL);
+    }
+
+  if (! _gabble_connection_send_with_reply (priv->conn, msg, gabble_im_factory_mam_request_reply_cb, G_OBJECT(self), NULL, &error))
+    {
+      g_object_unref (msg);
+    }
+}
+
+void gabble_im_factory_mam_handle_sent (GabbleIMChannel *channel, TpSignalledMessage *message, guint flags, gchar *token, gpointer user_data)
+{
+  GabbleImFactory *self = GABBLE_IM_FACTORY (user_data);
+  GabbleImFactoryPrivate *priv = self->priv;
+
+  DEBUG ("sent message with id=%s", token);
+  g_hash_table_insert (priv->previous_messages, g_strdup (token), NULL);
 }
