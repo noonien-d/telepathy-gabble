@@ -96,6 +96,7 @@
 #define NS_MUC_OWNER            "http://jabber.org/protocol/muc#owner"
 #define NS_NICK                 "http://jabber.org/protocol/nick"
 #define NS_OOB                  "jabber:iq:oob"
+#define NS_XOOB                 "jabber:x:oob"
 #define NS_OLPC_BUDDY_PROPS     "http://laptop.org/xmpp/buddy-properties"
 #define NS_OLPC_ACTIVITIES      "http://laptop.org/xmpp/activities"
 #define NS_OLPC_CURRENT_ACTIVITY    "http://laptop.org/xmpp/current-activity"
@@ -125,6 +126,9 @@
 #define NS_GEOLOC               "http://jabber.org/protocol/geoloc"
 #define NS_GOOGLE_MAIL_NOTIFY   "google:mail:notify"
 #define NS_GOOGLE_SETTING       "google:setting"
+
+//XEP-0363: HTTP File Upload
+#define NS_HTTPUPLOAD           "urn:xmpp:http:upload"
 
 #define NS_TEMPPRES "urn:xmpp:temppres:0"
 #define NS_GOOGLE_SHARED_STATUS "google:shared-status"
